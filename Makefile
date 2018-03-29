@@ -15,7 +15,7 @@ get:
 	go get
 
 run: get
-    go run main.go -addr "rebel-x.org:993" -login "verisure@rebel-x.org" -password "readsUre1\!"
+    go run main.go -addr 95.142.102.175:993 -login verisure@rebel-x.org -password readsUre1\! -domotics-login golang -domotics-password tJEJqn8kaKFABHjrH9Jt -domotics-url https://217.62.16.236:8443
 
 run-race: get
 	go run -race

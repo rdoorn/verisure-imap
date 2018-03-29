@@ -1,12 +1,22 @@
 package main
 
+// https://www.domoticz.com/forum/viewtopic.php?t=1785 // virtual device?
+// https://www.domoticz.com/forum/viewtopic.php?t=10940 // sonos
+// https://github.com/jishi/node-sonos-http-api // sonos api
+// https://www.domoticz.com/forum/viewtopic.php?t=11577 // update virtual device
+// https://github.com/dhleong/ps4-waker/issues/14 // ps4 waker -> netflix
+
 import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mxk/go-imap/imap"
@@ -18,17 +28,29 @@ type imapConfig struct {
 	passwordStr    *string
 	deleteAfterStr *string
 	mailboxStr     *string
-	deleteAfterDur time.Duration
+}
+
+type domoticsConfig struct {
+	urlStr      *string // http://localhost:8443
+	pathStr     *string // /json.htm?type=command&param=updateuservariable&vname=alarm_state&vtype=string&vvalue=USERVARIABLEVALUE
+	loginStr    *string
+	passwordStr *string
 }
 
 var config imapConfig
+var domotics domoticsConfig
+
+var oldState string
 
 func init() {
 	config.addrStr = flag.String("addr", os.Getenv("IMAP_ADDR"), "imap address:port")
 	config.loginStr = flag.String("login", os.Getenv("IMAP_LOGIN"), "imap login")
 	config.passwordStr = flag.String("password", os.Getenv("IMAP_PASSWORD"), "imap password")
 	config.mailboxStr = flag.String("mailbox", os.Getenv("IMAP_MAILBOX"), "imap mailbox")
-	config.deleteAfterStr = flag.String("delet-eafter", os.Getenv("IMAP_DELETE_AFTER"), "imap delete mails after")
+	domotics.urlStr = flag.String("domotics-url", os.Getenv("DOMOTICS_URL"), "domotics url")
+	domotics.pathStr = flag.String("domotics-path", os.Getenv("DOMOTICS_PATH"), "domotics path")
+	domotics.loginStr = flag.String("domotics-login", os.Getenv("DOMOTICS_LOGIN"), "domotics login")
+	domotics.passwordStr = flag.String("domotics-password", os.Getenv("DOMOTICS_PASSWORD"), "domotics password")
 	flag.Parse()
 	if *config.addrStr == "" {
 		flag.Usage()
@@ -46,20 +68,39 @@ func init() {
 		box := "INBOX"
 		config.mailboxStr = &box
 	}
-	if *config.deleteAfterStr != "" {
-		var err error
-		config.deleteAfterDur, err = time.ParseDuration(*config.deleteAfterStr)
-		if err != nil {
-			log.Fatalf("could not convert %s in to a duration: %s", *config.deleteAfterStr, err)
-		}
+	if *domotics.urlStr == "" {
+		t := "http://localhost:8443"
+		domotics.urlStr = &t
+	}
+	if *domotics.pathStr == "" { // https://www.domoticz.com/wiki/User_variables
+		t := "/json.htm?type=command&param=updateuservariable&vname=alarm_state&vtype=2&vvalue="
+		domotics.pathStr = &t
 	}
 }
 
 func main() {
-	getStatus()
+	sigterm := make(chan os.Signal, 10)
+	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
+
+	for {
+		fmt.Println("Main Loop")
+		select {
+		case <-sigterm:
+			log.Println("Program killed by signal!")
+			return
+		default:
+			err := getStatus()
+			fmt.Printf("Exited: %s\n", err)
+		}
+	}
+
 }
 
-func getStatus() {
+func getStatus() error {
+
+	sigterm := make(chan os.Signal, 10)
+	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
+
 	imap.DefaultLogger = log.New(os.Stdout, "", 0)
 	//imap.DefaultLogMask = imap.LogConn | imap.LogRaw
 	imap.DefaultLogMask = imap.LogConn
@@ -87,8 +128,22 @@ func getStatus() {
 		// sleep so we don't hammer the server
 		time.Sleep(1 * time.Second)
 
+		select {
+		case <-sigterm:
+			return fmt.Errorf("User quit")
+		default:
+		}
+
+		_, err := ReportOK(c.Noop())
+		if err != nil {
+			return err
+		}
+
 		// Find all mails from verisure
-		cmd := ReportOK(c.UIDSearch("FROM", c.Quote("Verisure")))
+		cmd, err := ReportOK(c.UIDSearch("FROM", c.Quote("Verisure")))
+		if err != nil {
+			return err
+		}
 		r := cmd.Data[0].SearchResults()
 		if len(r) == 0 {
 			fmt.Println("No mail")
@@ -104,7 +159,10 @@ func getStatus() {
 			lastSet, _ := imap.NewSeqSet("")
 			lastSet.AddNum(r[i])
 
-			cmd = ReportOK(c.UIDFetch(lastSet, "FLAGS", "INTERNALDATE", "RFC822.SIZE", "BODY[HEADER.FIELDS (SUBJECT)]"))
+			cmd, err = ReportOK(c.UIDFetch(lastSet, "FLAGS", "INTERNALDATE", "RFC822.SIZE", "BODY[HEADER.FIELDS (SUBJECT)]"))
+			if err != nil {
+				return err
+			}
 			z := string(imap.AsBytes(cmd.Data[0].MessageInfo().Attrs["BODY[HEADER.FIELDS (SUBJECT)]"]))
 			z = strings.TrimSuffix(z, "\n")
 			z = strings.TrimSuffix(z, "\r")
@@ -113,18 +171,24 @@ func getStatus() {
 			z = strings.TrimPrefix(z, "Subject: ")
 
 			switch z {
-			case "Uitgeschakeld":
+			case "Systeem uitgeschakeld":
 				status = "OFF"
 				break L
 			case "Systeem ingeschakeld":
-				status = "ARMED"
+				status = "ARMED_AWAY"
 				break L
 			case "Gedeeltelijk Ingeschakeld":
-				status = "PARTIAL_ARMED"
+				status = "ARMED_HOME"
 				break L
 			default:
 				fmt.Printf("Unknown Status: [%s]\n", z)
 				// remove message
+			}
+		}
+		if oldState != status {
+			err := PostData(status)
+			if err == nil {
+				oldState = status
 			}
 		}
 		fmt.Printf("Status set to %s\n", status)
@@ -155,6 +219,7 @@ func getStatus() {
 
 	}
 	ReportOK(c.Close(true))
+	return nil
 	//return status
 	//ReportOK(c.Delete(mbox))
 }
@@ -187,25 +252,46 @@ func Sensitive(c *imap.Client, action string) imap.LogMask {
 	return mask
 }
 
-func ReportOK(cmd *imap.Command, err error) *imap.Command {
-	cmd.Result(imap.OK)
-	return cmd
-	var rsp *imap.Response
+func ReportOK(cmd *imap.Command, err error) (*imap.Command, error) {
+	//cmd.Result(imap.OK)
+	//return cmd
+	//var rsp *imap.Response
 	if cmd == nil {
 		//fmt.Printf("--- ??? ---\n%v\n\n", err)
-		panic(err)
+		//panic(err)
+		return cmd, err
 	} else if err == nil {
-		rsp, err = cmd.Result(imap.OK)
+		_, err = cmd.Result(imap.OK)
 	}
 	if err != nil {
-		fmt.Printf("--- %s ---\n%v\n\n", cmd.Name(true), err)
+		//fmt.Printf("--- %s ---\n%v\n\n", cmd.Name(true), err)
+		return cmd, err
 		panic(err)
 	}
 	c := cmd.Client()
-	fmt.Printf("--- %s ---\n"+
-		"%d command response(s), %d unilateral response(s)\n"+
-		"%s %s\n\n",
-		cmd.Name(true), len(cmd.Data), len(c.Data), rsp.Status, rsp.Info)
+	/*
+		fmt.Printf("--- %s ---\n"+
+			"%d command response(s), %d unilateral response(s)\n"+
+			"%s %s\n\n",
+			cmd.Name(true), len(cmd.Data), len(c.Data), rsp.Status, rsp.Info)*/
 	c.Data = nil
-	return cmd
+	return cmd, nil
+}
+
+func PostData(state string) error {
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+	url := fmt.Sprintf("%s%s%s", *domotics.urlStr, *domotics.pathStr, state)
+	fmt.Printf("GET on: [%s]\n", url)
+	req, err := http.NewRequest("GET", url, nil)
+	req.SetBasicAuth(*domotics.loginStr, *domotics.passwordStr)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	bodyText, err := ioutil.ReadAll(resp.Body)
+	fmt.Printf("Output: %s", bodyText)
+	return nil
 }
