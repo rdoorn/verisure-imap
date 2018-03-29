@@ -13,8 +13,10 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -32,7 +34,7 @@ type imapConfig struct {
 
 type domoticsConfig struct {
 	urlStr      *string // http://localhost:8443
-	pathStr     *string // /json.htm?type=command&param=updateuservariable&vname=alarm_state&vtype=string&vvalue=USERVARIABLEVALUE
+	pathStr     *string // /json.htm?type=command&param=updateuservariable&vname=alarm_state&vtype=2&vvalue=USERVARIABLEVALUE
 	loginStr    *string
 	passwordStr *string
 }
@@ -73,7 +75,7 @@ func init() {
 		domotics.urlStr = &t
 	}
 	if *domotics.pathStr == "" { // https://www.domoticz.com/wiki/User_variables
-		t := "/json.htm?type=command&param=updateuservariable&vname=alarm_state&vtype=2&vvalue="
+		t := "/json.htm?type=command&param=updateuservariable&vname=%s&vtype=2&vvalue=%s"
 		domotics.pathStr = &t
 	}
 }
@@ -151,6 +153,7 @@ func getStatus() error {
 			continue
 		}
 		fmt.Printf("%d mails: %v\n", len(r), r)
+		status_by := "unknown"
 
 		// Read last few messages, up to where we get a result
 	L:
@@ -159,6 +162,7 @@ func getStatus() error {
 			lastSet, _ := imap.NewSeqSet("")
 			lastSet.AddNum(r[i])
 
+			// Get Subject
 			cmd, err = ReportOK(c.UIDFetch(lastSet, "FLAGS", "INTERNALDATE", "RFC822.SIZE", "BODY[HEADER.FIELDS (SUBJECT)]"))
 			if err != nil {
 				return err
@@ -170,6 +174,22 @@ func getStatus() error {
 			z = strings.TrimSuffix(z, "\r")
 			z = strings.TrimPrefix(z, "Subject: ")
 
+			// Get Body
+			cmdBody, err := ReportOK(c.UIDFetch(lastSet, "FLAGS", "INTERNALDATE", "RFC822.SIZE", "BODY[]"))
+			if err != nil {
+				return err
+			}
+			body := string(imap.AsBytes(cmdBody.Data[0].MessageInfo().Attrs["BODY[]"]))
+			//fmt.Printf("Body: [%s]\n", body)
+			r, _ := regexp.Compile("Het systeem .* door (.*).")
+			match := r.FindStringSubmatch(body)
+			if len(match) > 0 {
+				status_by = match[1]
+				fmt.Printf("Match: _%+v_\n", match[1])
+			}
+			// Het systeem Bongerd 36 werd ingeschakeld met een Starkey door R. Doorn.
+
+			// Parse subject
 			switch z {
 			case "Systeem uitgeschakeld":
 				status = "OFF"
@@ -186,7 +206,8 @@ func getStatus() error {
 			}
 		}
 		if oldState != status {
-			err := PostData(status)
+			PostData("alarm_state_by", status_by)
+			err = PostData("alarm_state", status)
 			if err == nil {
 				oldState = status
 			}
@@ -278,12 +299,13 @@ func ReportOK(cmd *imap.Command, err error) (*imap.Command, error) {
 	return cmd, nil
 }
 
-func PostData(state string) error {
+func PostData(variable string, state string) error {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 	client := &http.Client{Transport: tr}
-	url := fmt.Sprintf("%s%s%s", *domotics.urlStr, *domotics.pathStr, state)
+	path := fmt.Sprintf(*domotics.pathStr, variable, UrlEncoded(state))
+	url := fmt.Sprintf("%s%s", *domotics.urlStr, path)
 	fmt.Printf("GET on: [%s]\n", url)
 	req, err := http.NewRequest("GET", url, nil)
 	req.SetBasicAuth(*domotics.loginStr, *domotics.passwordStr)
@@ -294,4 +316,12 @@ func PostData(state string) error {
 	bodyText, err := ioutil.ReadAll(resp.Body)
 	fmt.Printf("Output: %s", bodyText)
 	return nil
+}
+
+func UrlEncoded(str string) string {
+	u, err := url.Parse(str)
+	if err != nil {
+		return ""
+	}
+	return u.String()
 }
