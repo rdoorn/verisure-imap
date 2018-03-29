@@ -128,7 +128,7 @@ func getStatus() error {
 	// Loop till error
 	for {
 		// sleep so we don't hammer the server
-		time.Sleep(1 * time.Second)
+		time.Sleep(2 * time.Second)
 
 		select {
 		case <-sigterm:
@@ -154,6 +154,7 @@ func getStatus() error {
 		}
 		fmt.Printf("%d mails: %v\n", len(r), r)
 		status_by := "unknown"
+		status_int := 0
 
 		// Read last few messages, up to where we get a result
 	L:
@@ -184,7 +185,7 @@ func getStatus() error {
 			r, _ := regexp.Compile("Het systeem .* door (.*).")
 			match := r.FindStringSubmatch(body)
 			if len(match) > 0 {
-				status_by = match[1]
+				status_by = strings.TrimRight(match[1], ".")
 				fmt.Printf("Match: _%+v_\n", match[1])
 			}
 			// Het systeem Bongerd 36 werd ingeschakeld met een Starkey door R. Doorn.
@@ -193,12 +194,15 @@ func getStatus() error {
 			switch z {
 			case "Systeem uitgeschakeld":
 				status = "OFF"
+				status_int = 0
 				break L
 			case "Systeem ingeschakeld":
 				status = "ARMED_AWAY"
+				status_int = 10
 				break L
-			case "Gedeeltelijk Ingeschakeld":
+			case "Gedeeltelijk ingeschakeld":
 				status = "ARMED_HOME"
+				status_int = 20
 				break L
 			default:
 				fmt.Printf("Unknown Status: [%s]\n", z)
@@ -206,11 +210,12 @@ func getStatus() error {
 			}
 		}
 		if oldState != status {
-			PostData("alarm_state_by", status_by)
-			err = PostData("alarm_state", status)
+			PostUserData("alarm_state_by", status_by)
+			err = PostUserData("alarm_state", status)
 			if err == nil {
 				oldState = status
 			}
+			err = PostPathData(fmt.Sprintf("/json.htm?type=command&param=switchlight&idx=%d&switchcmd=Set%%20Level&level=%d", 230, status_int))
 		}
 		fmt.Printf("Status set to %s\n", status)
 		// read only the last message
@@ -299,12 +304,30 @@ func ReportOK(cmd *imap.Command, err error) (*imap.Command, error) {
 	return cmd, nil
 }
 
-func PostData(variable string, state string) error {
+func PostUserData(variable string, state string) error {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 	client := &http.Client{Transport: tr}
 	path := fmt.Sprintf(*domotics.pathStr, variable, UrlEncoded(state))
+	url := fmt.Sprintf("%s%s", *domotics.urlStr, path)
+	fmt.Printf("GET on: [%s]\n", url)
+	req, err := http.NewRequest("GET", url, nil)
+	req.SetBasicAuth(*domotics.loginStr, *domotics.passwordStr)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	bodyText, err := ioutil.ReadAll(resp.Body)
+	fmt.Printf("Output: %s", bodyText)
+	return nil
+}
+
+func PostPathData(path string) error {
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
 	url := fmt.Sprintf("%s%s", *domotics.urlStr, path)
 	fmt.Printf("GET on: [%s]\n", url)
 	req, err := http.NewRequest("GET", url, nil)
