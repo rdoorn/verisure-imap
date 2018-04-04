@@ -192,7 +192,7 @@ func getStatus() error {
 
 			// Parse subject
 			switch z {
-			case "Systeem uitgeschakeld":
+			case "Systeem uitgeschakeld", "Uitgeschakeld":
 				status = "OFF"
 				status_int = 0
 				break L
