@@ -109,7 +109,7 @@ func getStatus() error {
 	status := "UNKNOWN"
 
 	c := Dial(*config.addrStr)
-	defer func() { ReportOK(c.Logout(30 * time.Second)) }()
+	defer func() { ReportOK(c.Logout(1 * time.Second)) }()
 
 	if c.Caps["STARTTLS"] {
 		ReportOK(c.StartTLS(nil))
@@ -124,6 +124,7 @@ func getStatus() error {
 
 	// Select INBOX
 	ReportOK(c.Select("INBOX", false))
+	t := time.NewTimer(60 * time.Second)
 
 	// Loop till error
 	for {
@@ -133,6 +134,8 @@ func getStatus() error {
 		select {
 		case <-sigterm:
 			return fmt.Errorf("User quit")
+		case <-t.C:
+			return fmt.Errorf("login expired")
 		default:
 		}
 
