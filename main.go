@@ -108,7 +108,10 @@ func getStatus() error {
 	imap.DefaultLogMask = imap.LogConn
 	status := "UNKNOWN"
 
-	c := Dial(*config.addrStr)
+	c, err := Dial(*config.addrStr)
+	if err != nil {
+		return err
+	}
 	defer func() { ReportOK(c.Logout(1 * time.Second)) }()
 
 	if c.Caps["STARTTLS"] {
@@ -253,17 +256,13 @@ func getStatus() error {
 	//ReportOK(c.Delete(mbox))
 }
 
-func Dial(addr string) (c *imap.Client) {
-	var err error
+func Dial(addr string) (c *imap.Client, err error) {
 	if strings.HasSuffix(addr, ":993") {
 		c, err = imap.DialTLS(addr, &tls.Config{InsecureSkipVerify: true})
 	} else {
 		c, err = imap.Dial(addr)
 	}
-	if err != nil {
-		panic(err)
-	}
-	return c
+	return c, err
 }
 
 func Login(c *imap.Client, user, pass string) (cmd *imap.Command, err error) {
@@ -282,24 +281,26 @@ func Sensitive(c *imap.Client, action string) imap.LogMask {
 }
 
 func ReportOK(cmd *imap.Command, err error) (*imap.Command, error) {
-	//cmd.Result(imap.OK)
+	cmd.Result(imap.OK)
 	//return cmd
 	//var rsp *imap.Response
 	if cmd == nil {
-		//fmt.Printf("--- ??? ---\n%v\n\n", err)
+		fmt.Printf("--- ??? ---\n%v\n\n", err)
 		//panic(err)
 		return cmd, err
 	} else if err == nil {
 		_, err = cmd.Result(imap.OK)
 	}
 	if err != nil {
-		//fmt.Printf("--- %s ---\n%v\n\n", cmd.Name(true), err)
+		fmt.Printf("--- %s ---\n%v\n\n", cmd.Name(true), err)
 		return cmd, err
-		panic(err)
+		//panic(err)
 	}
 	c := cmd.Client()
-	/*
 		fmt.Printf("--- %s ---\n"+
+			"%d command response(s), %d unilateral response(s)\n",
+			cmd.Name(true), len(cmd.Data), len(c.Data))
+		/*fmt.Printf("--- %s ---\n"+
 			"%d command response(s), %d unilateral response(s)\n"+
 			"%s %s\n\n",
 			cmd.Name(true), len(cmd.Data), len(c.Data), rsp.Status, rsp.Info)*/
