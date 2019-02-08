@@ -281,24 +281,26 @@ func Sensitive(c *imap.Client, action string) imap.LogMask {
 }
 
 func ReportOK(cmd *imap.Command, err error) (*imap.Command, error) {
-	//cmd.Result(imap.OK)
+	cmd.Result(imap.OK)
 	//return cmd
 	//var rsp *imap.Response
 	if cmd == nil {
-		//fmt.Printf("--- ??? ---\n%v\n\n", err)
+		fmt.Printf("--- ??? ---\n%v\n\n", err)
 		//panic(err)
 		return cmd, err
 	} else if err == nil {
 		_, err = cmd.Result(imap.OK)
 	}
 	if err != nil {
-		//fmt.Printf("--- %s ---\n%v\n\n", cmd.Name(true), err)
+		fmt.Printf("--- %s ---\n%v\n\n", cmd.Name(true), err)
 		return cmd, err
 		//panic(err)
 	}
 	c := cmd.Client()
-	/*
 		fmt.Printf("--- %s ---\n"+
+			"%d command response(s), %d unilateral response(s)\n",
+			cmd.Name(true), len(cmd.Data), len(c.Data))
+		/*fmt.Printf("--- %s ---\n"+
 			"%d command response(s), %d unilateral response(s)\n"+
 			"%s %s\n\n",
 			cmd.Name(true), len(cmd.Data), len(c.Data), rsp.Status, rsp.Info)*/
