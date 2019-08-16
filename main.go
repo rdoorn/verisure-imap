@@ -85,7 +85,7 @@ func main() {
 	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
 
 	for {
-		fmt.Println("Main Loop")
+		//fmt.Println("Main Loop")
 		select {
 		case <-sigterm:
 			log.Println("Program killed by signal!")
@@ -154,11 +154,11 @@ func getStatus() error {
 		}
 		r := cmd.Data[0].SearchResults()
 		if len(r) == 0 {
-			fmt.Println("No mail")
+			//fmt.Println("No mail")
 			ReportOK(c.Close(true))
 			continue
 		}
-		fmt.Printf("%d mails: %v\n", len(r), r)
+		//nfmt.Printf("%d mails: %v\n", len(r), r)
 		status_by := "unknown"
 		status_int := 0
 
@@ -192,7 +192,7 @@ func getStatus() error {
 			match := r.FindStringSubmatch(body)
 			if len(match) > 0 {
 				status_by = strings.TrimRight(match[1], ".")
-				fmt.Printf("Match: _%+v_\n", match[1])
+				//fmt.Printf("Match: _%+v_\n", match[1])
 			}
 			// Het systeem Bongerd 36 werd ingeschakeld met een Starkey door R. Doorn.
 
@@ -285,21 +285,21 @@ func ReportOK(cmd *imap.Command, err error) (*imap.Command, error) {
 	//return cmd
 	//var rsp *imap.Response
 	if cmd == nil {
-		fmt.Printf("--- ??? ---\n%v\n\n", err)
+		//fmt.Printf("--- ??? ---\n%v\n\n", err)
 		//panic(err)
 		return cmd, err
 	} else if err == nil {
 		_, err = cmd.Result(imap.OK)
 	}
 	if err != nil {
-		fmt.Printf("--- %s ---\n%v\n\n", cmd.Name(true), err)
+		//fmt.Printf("--- %s ---\n%v\n\n", cmd.Name(true), err)
 		return cmd, err
 		//panic(err)
 	}
 	c := cmd.Client()
-		fmt.Printf("--- %s ---\n"+
+		/*fmt.Printf("--- %s ---\n"+
 			"%d command response(s), %d unilateral response(s)\n",
-			cmd.Name(true), len(cmd.Data), len(c.Data))
+			cmd.Name(true), len(cmd.Data), len(c.Data))*/
 		/*fmt.Printf("--- %s ---\n"+
 			"%d command response(s), %d unilateral response(s)\n"+
 			"%s %s\n\n",
@@ -315,15 +315,18 @@ func PostUserData(variable string, state string) error {
 	client := &http.Client{Transport: tr}
 	path := fmt.Sprintf(*domotics.pathStr, variable, UrlEncoded(state))
 	url := fmt.Sprintf("%s%s", *domotics.urlStr, path)
-	fmt.Printf("GET on: [%s]\n", url)
+	//fmt.Printf("GET on: [%s]\n", url)
 	req, err := http.NewRequest("GET", url, nil)
 	req.SetBasicAuth(*domotics.loginStr, *domotics.passwordStr)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
-	bodyText, err := ioutil.ReadAll(resp.Body)
-	fmt.Printf("Output: %s", bodyText)
+    defer resp.Body.Close()
+	_, err = ioutil.ReadAll(resp.Body)
+    if err != nil {
+	    fmt.Printf("Post err: %s", err)
+    }
 	return nil
 }
 
@@ -333,15 +336,19 @@ func PostPathData(path string) error {
 	}
 	client := &http.Client{Transport: tr}
 	url := fmt.Sprintf("%s%s", *domotics.urlStr, path)
-	fmt.Printf("GET on: [%s]\n", url)
+	//fmt.Printf("GET on: [%s]\n", url)
 	req, err := http.NewRequest("GET", url, nil)
 	req.SetBasicAuth(*domotics.loginStr, *domotics.passwordStr)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
-	bodyText, err := ioutil.ReadAll(resp.Body)
-	fmt.Printf("Output: %s", bodyText)
+    defer resp.Body.Close()
+	_, err = ioutil.ReadAll(resp.Body)
+    if err != nil {
+	    fmt.Printf("Post err: %s", err)
+    }
+	//fmt.Printf("Output: %s", bodyText)
 	return nil
 }
 
