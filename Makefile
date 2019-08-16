@@ -23,5 +23,7 @@ run-race: get
 linux: get
 	GOOS=linux GOARCH=amd64 go build -v -o ./verisure-imap -ldflags '-s -w --extldflags "-static" ' ./main.go
 
+docker: get
+	docker build -t verisure:1.0 . -f Dockerfile
 
 all: bench run

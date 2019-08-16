@@ -1,0 +1,12 @@
+FROM golang:1.11
+RUN mkdir /app 
+ADD . /app/
+WORKDIR /app 
+#RUN apk add --no-cache git
+ENV GOPATH /go/
+ENV GOBIN /go/bin
+RUN go get ./...
+RUN go build -o main .
+RUN adduser --home /app appuser
+USER appuser
+CMD ["./main"]
