@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/mxk/go-imap/imap"
+	"github.com/rdoorn/ziggobox"
 )
 
 type imapConfig struct {
@@ -39,8 +40,17 @@ type domoticsConfig struct {
 	passwordStr *string
 }
 
+type ziggoConfig struct {
+	urlStr      *string // http://localhost:8443
+	loginStr    *string
+	passwordStr *string
+	macsStr     *string
+	macs        []string
+}
+
 var config imapConfig
 var domotics domoticsConfig
+var ziggo ziggoConfig
 
 var oldState string
 
@@ -53,6 +63,10 @@ func init() {
 	domotics.pathStr = flag.String("domotics-path", os.Getenv("DOMOTICS_PATH"), "domotics path")
 	domotics.loginStr = flag.String("domotics-login", os.Getenv("DOMOTICS_LOGIN"), "domotics login")
 	domotics.passwordStr = flag.String("domotics-password", os.Getenv("DOMOTICS_PASSWORD"), "domotics password")
+	ziggo.urlStr = flag.String("ziggo-url", os.Getenv("ZIGGO_URL"), "ziggo url")
+	ziggo.loginStr = flag.String("ziggo-login", os.Getenv("ZIGGO_LOGIN"), "ziggo login")
+	ziggo.passwordStr = flag.String("ziggo-password", os.Getenv("ZIGGO_PASSWORD"), "ziggo password")
+	ziggo.macsStr = flag.String("ziggo-macs", os.Getenv("ZIGGO_MACS"), "ziggo macs (comma seperated)")
 	flag.Parse()
 	if *config.addrStr == "" {
 		flag.Usage()
@@ -77,6 +91,13 @@ func init() {
 	if *domotics.pathStr == "" { // https://www.domoticz.com/wiki/User_variables
 		t := "/json.htm?type=command&param=updateuservariable&vname=%s&vtype=2&vvalue=%s"
 		domotics.pathStr = &t
+	}
+	if *ziggo.macsStr != "" {
+		ziggo.macs = strings.Split(*ziggo.macsStr, ",")
+	}
+	if *ziggo.loginStr == "" {
+		t := "NULL"
+		ziggo.loginStr = &t
 	}
 }
 
@@ -221,6 +242,19 @@ func getStatus() error {
 			if err == nil {
 				oldState = status
 			}
+			if status == "ARMED_AWAY" {
+				// if the alarm is on and we are away, allow the remote viewing of cameras
+				err := allowZiggoMacs()
+				if err != nil {
+					fmt.Printf("allow ziggo macs failed: %s", err)
+				}
+			} else {
+				// we are home, (armed or not) we disable the remote viewing of cameras
+				err := denyZiggoMacs()
+				if err != nil {
+					fmt.Printf("deny ziggo macs failed: %s", err)
+				}
+			}
 			err = PostPathData(fmt.Sprintf("/json.htm?type=command&param=switchlight&idx=%d&switchcmd=Set%%20Level&level=%d", 230, status_int))
 		}
 		fmt.Printf("Status set to %s\n", status)
@@ -349,4 +383,72 @@ func UrlEncoded(str string) string {
 		return ""
 	}
 	return u.String()
+}
+
+/*
+ziggo.urlStr = flag.String("ziggo-url", os.Getenv("ZIGGO_URL"), "ziggo url")
+ziggo.loginStr = flag.String("ziggo-login", os.Getenv("ZIGGO_LOGIN"), "ziggo login")
+ziggo.passwordStr = flag.String("ziggo-password", os.Getenv("ZIGGO_PASSWORD"), "ziggo password")
+ziggo.macsStr = flag.String("ziggo-macs", os.Getenv("ZIGGO_MACS"), "ziggo macs (comma seperated)")
+*/
+func allowZiggoMacs() error {
+	z := ziggobox.New(*ziggo.urlStr)
+
+	// init sets up the initial sessiontoken
+	_, err := z.Init()
+
+	// do a proper login
+	err = z.Login(*ziggo.loginStr, *ziggo.passwordStr)
+	if err != nil {
+		return fmt.Errorf("ziggo login failed: %s", err.Error())
+	}
+
+	// get settings to see if we are logged in
+	res, err := z.GetGlobalSettings()
+	if err != nil {
+		return fmt.Errorf("ziggo get global settings failed: %s", err.Error())
+	}
+	log.Printf("ziggo logged in: %t", res.AccessLevel == 1)
+
+	for _, mac := range ziggo.macs {
+		// deny/allow mac (only works on pre-configured macs, we don't add new macs or delete them)
+		err = z.AllowMac(mac)
+		if err != nil {
+			return fmt.Errorf("ziggo failed to allow mac %s: %s", mac, err.Error())
+		}
+	}
+	// logout
+	return z.Logout()
+}
+func denyZiggoMacs() error {
+	if *ziggo.urlStr == "" {
+		return fmt.Errorf("ziggo url not configured")
+	}
+	z := ziggobox.New(*ziggo.urlStr)
+
+	// init sets up the initial sessiontoken
+	_, err := z.Init()
+
+	// do a proper login
+	err = z.Login(*ziggo.loginStr, *ziggo.passwordStr)
+	if err != nil {
+		return fmt.Errorf("ziggo login failed: %s", err.Error())
+	}
+
+	// get settings to see if we are logged in
+	res, err := z.GetGlobalSettings()
+	if err != nil {
+		return fmt.Errorf("ziggo get global settings failed: %s", err.Error())
+	}
+	log.Printf("ziggo logged in: %t", res.AccessLevel == 1)
+
+	for _, mac := range ziggo.macs {
+		// deny/allow mac (only works on pre-configured macs, we don't add new macs or delete them)
+		err = z.DenyMac(mac)
+		if err != nil {
+			return fmt.Errorf("ziggo failed to deny mac %s: %s", mac, err.Error())
+		}
+	}
+	// logout
+	return z.Logout()
 }
